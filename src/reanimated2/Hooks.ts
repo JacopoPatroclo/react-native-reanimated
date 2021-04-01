@@ -1,4 +1,6 @@
 /* global _frameTimestamp */
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-nocheck
 import { useEffect, useRef, useCallback } from 'react';
 
 import WorkletEventHandler from './WorkletEventHandler';
@@ -493,13 +495,33 @@ export function useAnimatedStyle(updater, dependencies, adapters) {
 
   // check for invalid usage of shared values in returned object
   let wrongKey;
-  const isError = Object.keys(initial).some((key) => {
-    const element = initial[key];
+  const isObjectValid = (element, key) => {
     const result = typeof element === 'object' && element.value !== undefined;
     if (result) {
       wrongKey = key;
     }
-    return result;
+    return !result;
+  };
+  const isError = Object.keys(initial).some((key) => {
+    const element = initial[key];
+    let result = false;
+    // a case for transform that has a format of an array of objects
+    if (Array.isArray(element)) {
+      for (const elementArrayItem of element) {
+        // this means unhandled format and it doesn't match the transform format
+        if (typeof elementArrayItem !== 'object') {
+          break;
+        }
+        const objectValue = Object.values(elementArrayItem)[0];
+        result = isObjectValid(objectValue, key);
+        if (!result) {
+          break;
+        }
+      }
+    } else {
+      result = isObjectValid(element, key);
+    }
+    return !result;
   });
   if (isError && wrongKey !== undefined) {
     throw new Error(
@@ -589,7 +611,7 @@ function areDependenciesEqual(nextDeps, prevDeps) {
     return (x === y && (x !== 0 || 1 / x === 1 / y)) || (x !== x && y !== y);
     /* eslint-enable no-self-compare */
   }
-  var objectIs = typeof Object.is === 'function' ? Object.is : is;
+  const objectIs = typeof Object.is === 'function' ? Object.is : is;
 
   function areHookInputsEqual(nextDeps, prevDeps) {
     if (!nextDeps || !prevDeps || prevDeps.length !== nextDeps.length) {

@@ -1,28 +1,28 @@
 #include "MutableValue.h"
 #include "SharedParent.h"
 #include "ShareableValue.h"
-#include "NativeReanimatedModule.h"
+#include "RuntimeManager.h"
+#include "RuntimeDecorator.h"
 
 namespace reanimated {
 
 void MutableValue::setValue(jsi::Runtime &rt, const jsi::Value &newValue) {
   std::lock_guard<std::mutex> lock(readWriteMutex);
-  value = ShareableValue::adapt(rt, newValue, module);
-  
+  value = ShareableValue::adapt(rt, newValue, runtimeManager);
+
   std::shared_ptr<MutableValue> thiz = shared_from_this();
   auto notifyListeners = [thiz] () {
     for (auto listener : thiz->listeners) {
       listener.second();
     }
   };
-  
-  if (module->isUIRuntime(rt)) {
+  if (RuntimeDecorator::isWorkletRuntime(rt)) {
     notifyListeners();
   } else {
-    module->scheduler->scheduleOnUI([notifyListeners] {
+    runtimeManager->scheduler->scheduleOnUI([notifyListeners] {
       notifyListeners();
     });
-  } 
+  }
 }
 
 jsi::Value MutableValue::getValue(jsi::Runtime &rt) {
@@ -33,14 +33,14 @@ jsi::Value MutableValue::getValue(jsi::Runtime &rt) {
 void MutableValue::set(jsi::Runtime &rt, const jsi::PropNameID &name, const jsi::Value &newValue) {
   auto propName = name.utf8(rt);
 
-  if (module->isHostRuntime(rt)) {
+  if (RuntimeDecorator::isReactRuntime(rt)) {
     if (propName == "value") {
-      auto shareable = ShareableValue::adapt(rt, newValue, module);
-      module->scheduler->scheduleOnUI([this, shareable] {
-        jsi::Runtime &rt = *this->module->runtime.get();
+      auto shareable = ShareableValue::adapt(rt, newValue, runtimeManager);
+      runtimeManager->scheduler->scheduleOnUI([this, shareable] {
+        jsi::Runtime &rt = *this->runtimeManager->runtime.get();
         auto setterProxy = jsi::Object::createFromHostObject(rt, std::make_shared<MutableValueSetterProxy>(shared_from_this()));
         jsi::Value newValue = shareable->getValue(rt);
-        module->valueSetter->getValue(rt)
+        runtimeManager->valueSetter->getValue(rt)
           .asObject(rt)
           .asFunction(rt)
           .callWithThis(rt, setterProxy, newValue);
@@ -52,7 +52,7 @@ void MutableValue::set(jsi::Runtime &rt, const jsi::PropNameID &name, const jsi:
   // UI thread
   if (propName == "value") {
     auto setterProxy = jsi::Object::createFromHostObject(rt, std::make_shared<MutableValueSetterProxy>(shared_from_this()));
-    module->valueSetter->getValue(rt)
+    runtimeManager->valueSetter->getValue(rt)
       .asObject(rt)
       .asFunction(rt)
       .callWithThis(rt, setterProxy, newValue);
@@ -72,7 +72,7 @@ jsi::Value MutableValue::get(jsi::Runtime &rt, const jsi::PropNameID &name) {
     return getValue(rt);
   }
 
-  if (module->isUIRuntime(rt)) {
+  if (RuntimeDecorator::isWorkletRuntime(rt)) {
     // _value and _animation should be accessed from UI only
     if (propName == "_value") {
       return getValue(rt);
@@ -94,8 +94,8 @@ std::vector<jsi::PropNameID> MutableValue::getPropertyNames(jsi::Runtime &rt) {
   return result;
 }
 
-MutableValue::MutableValue(jsi::Runtime &rt, const jsi::Value &initial, NativeReanimatedModule *module, std::shared_ptr<Scheduler> s):
-StoreUser(s), module(module), value(ShareableValue::adapt(rt, initial, module)) {
+MutableValue::MutableValue(jsi::Runtime &rt, const jsi::Value &initial, RuntimeManager *runtimeManager, std::shared_ptr<Scheduler> s):
+StoreUser(s), runtimeManager(runtimeManager), value(ShareableValue::adapt(rt, initial, runtimeManager)) {
 }
 
 unsigned long int MutableValue::addListener(unsigned long id, std::function<void ()> listener) {
